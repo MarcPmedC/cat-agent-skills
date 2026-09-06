@@ -1,10 +1,17 @@
 # Copilot Studio Adaptive Card Builder
 
-Turn a plain-language interaction requirement into a maker-ready Adaptive Card package for Microsoft Copilot Studio. The skill produces the card, sample data when useful, input and action mappings, node wiring guidance, validation results, accessibility notes, and a plain-text fallback.
+> **Standard-harness target only.** This skill may be loaded in a skills-capable
+> GitHub Copilot harness, but the package it produces targets Copilot Studio
+> agents on the standard harness. The GitHub Copilot harness does not support
+> Adaptive Cards or topic nodes, so the generated card cannot render or be
+> tested in that same agent. Configure and test the package in a standard-harness
+> agent and its intended published channels.
+
+Turn a plain-language interaction requirement into a maker-ready Adaptive Card package for a Microsoft Copilot Studio standard-harness agent. The skill produces the card, sample data when useful, input and action mappings, node wiring guidance, validation results, accessibility notes, and a plain-text fallback.
 
 ## Important boundary
 
-**Agent instructions cannot dynamically render an Adaptive Card.** The skill creates artifacts for a maker to paste or configure in a Copilot Studio **Ask with Adaptive Card**, **Message**, or **Question** node. If card JSON is emitted into chat by a model, it normally appears as text or a code block rather than as a native card.
+**Agent instructions cannot dynamically render an Adaptive Card.** The skill creates artifacts for a maker to paste or configure in a standard-harness Copilot Studio **Ask with Adaptive Card**, **Message**, or **Question** node. If card JSON is emitted into chat by a model, it normally appears as text or a code block rather than as a native card.
 
 This is a maker-assistance skill. It is not a runtime UX engine, an authorization control, a complete Power Fx framework, or a guarantee that every channel renders a card identically.
 

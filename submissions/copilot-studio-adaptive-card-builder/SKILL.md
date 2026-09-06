@@ -3,9 +3,12 @@ name: copilot-studio-adaptive-card-builder
 description: >-
   Use this skill whenever a user asks to create, generate, design, review,
   validate, lint, troubleshoot, or improve an Adaptive Card for Microsoft
-  Copilot Studio, including forms, confirmations, approvals, welcome prompts,
-  status cards, handoff cards, input mappings, Action.Submit payloads, Power Fx
-  card formulas, accessibility, host compatibility, or paste-ready card JSON.
+  Copilot Studio standard-harness agents, including forms, confirmations,
+  approvals, welcome prompts, status cards, handoff cards, input mappings,
+  Action.Submit payloads, Power Fx card formulas, accessibility, host
+  compatibility, or paste-ready card JSON. The skill may run in a skills-capable
+  GitHub Copilot harness, but its generated package cannot render or be tested
+  there because that harness does not support Adaptive Cards or topic nodes.
   Use it before claiming that Adaptive Card JSON is ready for a Copilot Studio
   node. Do not use it to claim that generative instructions dynamically render
   native cards.
@@ -17,7 +20,14 @@ Create a complete maker-assistance package, not an isolated JSON block.
 
 ## Non-negotiable platform boundary
 
-**Generative instructions do not dynamically render an Adaptive Card.** Produce artifacts that a maker can paste or configure in a Copilot Studio card node. Never tell the user that adding JSON to agent instructions makes a native card appear. Model-emitted JSON is normally displayed as text.
+**The generated package is for Copilot Studio agents on the standard harness
+only.** This skill may be invoked from a skills-capable GitHub Copilot harness,
+but Adaptive Cards and topic nodes are not supported there. Do not attempt to
+render or test the generated card in that same GitHub Copilot harness agent.
+Hand the package to a maker to configure and test in a standard-harness agent
+and its intended published channels.
+
+**Generative instructions do not dynamically render an Adaptive Card.** Produce artifacts that a maker can paste or configure in a standard-harness Copilot Studio card node. Never tell the user that adding JSON to agent instructions makes a native card appear. Model-emitted JSON is normally displayed as text.
 
 Use:
 

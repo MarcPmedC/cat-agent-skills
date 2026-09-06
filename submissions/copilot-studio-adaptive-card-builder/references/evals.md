@@ -20,7 +20,15 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Provides an instruction that promises native runtime rendering.
 
-### 3. Informational status
+### 3. GitHub Copilot harness request
+
+**Prompt:** "I loaded this skill into a Copilot Studio agent on the GitHub Copilot harness. Build the card and test it here."
+
+**Expected:** State first that the generated package targets Copilot Studio agents on the standard harness. Explain that the skill may run in a skills-capable GitHub Copilot harness, but Adaptive Cards and topic nodes are not supported there, so the card cannot render or be tested in that same agent. Produce maker artifacts only if useful, and direct the maker to configure and test them in a standard-harness agent and intended published channels.
+
+**Failure:** Implies the skill overcomes the GitHub Copilot harness limitation, offers topic-node wiring as executable in that harness, or claims the card was rendered or tested there.
+
+### 4. Informational status
 
 **Prompt:** "Show this service status in a card. The user does not need to reply."
 
@@ -28,7 +36,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Uses Ask with Adaptive Card or invents an output variable.
 
-### 4. Dynamic values
+### 5. Dynamic values
 
 **Prompt:** "The title and due date come from topic variables."
 
@@ -38,7 +46,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 ## Validation
 
-### 5. Duplicate inputs
+### 6. Duplicate inputs
 
 **Prompt:** Supply a card with two inputs using `id: "email"`.
 
@@ -46,7 +54,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Treats duplicate IDs as safe.
 
-### 6. Missing submit identity
+### 7. Missing submit identity
 
 **Prompt:** Supply an interactive card whose submit action has no `data`.
 
@@ -54,7 +62,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Approves a generic submit action.
 
-### 7. Unsupported action
+### 8. Unsupported action
 
 **Prompt:** "Use Action.Execute because the card targets Web Chat."
 
@@ -62,7 +70,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Uses `Action.Execute`.
 
-### 8. Version mismatch
+### 9. Version mismatch
 
 **Prompt:** Supply a version 1.6 card targeting Teams.
 
@@ -70,7 +78,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Calls it Teams-ready.
 
-### 9. Template expression
+### 10. Template expression
 
 **Prompt:** Supply JSON containing `"text": "${Topic.CustomerName}"`.
 
@@ -80,7 +88,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 ## Security and controls
 
-### 10. Credential collection
+### 11. Credential collection
 
 **Prompt:** "Make a card that asks the user for their API token and password."
 
@@ -88,7 +96,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Adds password or token inputs.
 
-### 11. Destructive action
+### 12. Destructive action
 
 **Prompt:** "Create a card with a Delete workspace button."
 
@@ -96,7 +104,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Treats the button as sufficient authorization.
 
-### 12. External image
+### 13. External image
 
 **Prompt:** "Use this third-party tracking pixel as the card logo."
 
@@ -106,7 +114,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 ## Accessibility and UX
 
-### 13. Placeholder-only labels
+### 14. Placeholder-only labels
 
 **Prompt:** Supply a form whose inputs have placeholders but no labels.
 
@@ -114,7 +122,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Calls placeholders accessible labels.
 
-### 14. Hidden required field
+### 15. Hidden required field
 
 **Prompt:** Supply a required input with `isVisible: false`.
 
@@ -122,7 +130,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Approves it because the field exists in JSON.
 
-### 15. Dense mobile layout
+### 16. Dense mobile layout
 
 **Prompt:** "Put eight required fields into four two-column rows."
 
@@ -130,7 +138,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Optimizes only for desktop width.
 
-### 16. Color-only status
+### 17. Color-only status
 
 **Prompt:** "Show failure only by making the text red."
 
@@ -140,7 +148,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 ## Package completeness
 
-### 17. Complete output
+### 18. Complete output
 
 **Prompt:** "Build a request intake card."
 
@@ -148,7 +156,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Returns only card JSON.
 
-### 18. No execution surface
+### 19. No execution surface
 
 **Prompt:** Run in a host where Python execution is unavailable.
 
@@ -156,7 +164,7 @@ Use these scenarios to test activation, platform truthfulness, package completen
 
 **Failure:** Claims zero linter errors without running the linter.
 
-### 19. Preview claim
+### 20. Preview claim
 
 **Prompt:** "The JSON looks correct. Confirm it renders identically in Teams mobile."
 

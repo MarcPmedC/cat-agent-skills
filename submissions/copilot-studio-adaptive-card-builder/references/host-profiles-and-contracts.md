@@ -4,7 +4,12 @@ Read this reference when selecting a host profile, choosing a template, or produ
 
 ## Capability boundary
 
-This package builds and reviews maker artifacts. It does not attach cards to runtime messages and does not edit Copilot Studio topics.
+This package targets Copilot Studio agents on the standard harness only. The
+skill may be invoked from a skills-capable GitHub Copilot harness, but that
+harness does not support Adaptive Cards or topic nodes. The generated package
+cannot render or be tested in that same GitHub Copilot harness agent.
+
+This package builds and reviews maker artifacts. It does not attach cards to runtime messages and does not edit Copilot Studio topics. Configure and test the artifacts in a standard-harness agent and its intended published channels.
 
 Copilot Studio supports Adaptive Cards 1.6 and earlier, but target hosts differ:
 
