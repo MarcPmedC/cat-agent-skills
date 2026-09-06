@@ -1,0 +1,665 @@
+"""Regression tests for scripts/inventory_tools.py.
+
+Run from the skill root (the directory containing SKILL.md):
+
+    python scripts/tests/test_inventory_tools.py
+"""
+
+from __future__ import annotations
+
+import contextlib
+import importlib.util
+import io
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPT_PATH = Path(__file__).parents[1] / "inventory_tools.py"
+SUBMISSION_ROOT = SCRIPT_PATH.parents[1]
+SPEC = importlib.util.spec_from_file_location("inventory_tools", SCRIPT_PATH)
+assert SPEC and SPEC.loader
+inventory_tools = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = inventory_tools
+SPEC.loader.exec_module(inventory_tools)
+
+
+def scan(source: str, filename: str = "memory.py"):
+    return inventory_tools.scan_python(source, filename)
+
+
+def only(source: str):
+    records, _ = scan(source)
+    assert len(records) == 1, f"expected exactly one tool, got {len(records)}"
+    return records[0]
+
+
+def categories(record) -> set[str]:
+    return {signal.category for signal in record.signals}
+
+
+class DecoratorDetectionTests(unittest.TestCase):
+    def test_bare_decorator(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Return a heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        self.assertEqual(record.name, "ping")
+        self.assertEqual(record.language, "python")
+        self.assertEqual(record.detection, "parsed")
+
+    def test_called_decorator_without_arguments(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool()\n"
+            "def ping() -> str:\n"
+            "    '''Return a heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        self.assertEqual(record.name, "ping")
+        self.assertFalse(record.approval_mode_explicit)
+
+    def test_aliased_import(self):
+        record = only(
+            "from agent_framework import tool as af_tool\n"
+            "@af_tool(approval_mode='always_require')\n"
+            "def ping() -> str:\n"
+            "    '''Return a heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        self.assertTrue(record.gated)
+
+    def test_module_qualified_decorator(self):
+        record = only(
+            "import agent_framework\n"
+            "@agent_framework.tool\n"
+            "def ping() -> str:\n"
+            "    '''Return a heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        self.assertEqual(record.name, "ping")
+
+    def test_aliased_module_decorator(self):
+        record = only(
+            "import agent_framework as af\n"
+            "@af.tool(approval_mode='always_require')\n"
+            "def ping() -> str:\n"
+            "    '''Return a heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        self.assertTrue(record.gated)
+
+    def test_unrelated_decorator_is_ignored(self):
+        records, _ = scan(
+            "import functools\n"
+            "@functools.cache\n"
+            "def ping() -> str:\n"
+            "    return 'ok'\n"
+        )
+        self.assertEqual(records, [])
+
+    def test_unrelated_module_attribute_is_ignored(self):
+        records, _ = scan(
+            "import fastapi\n"
+            "app = fastapi.FastAPI()\n"
+            "@app.get('/ping')\n"
+            "def ping() -> str:\n"
+            "    return 'ok'\n"
+        )
+        self.assertEqual(records, [])
+
+    def test_async_tool_is_detected(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool(approval_mode='always_require')\n"
+            "async def ping() -> str:\n"
+            "    '''Return a heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        self.assertTrue(record.gated)
+
+    def test_method_inside_class_is_detected(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "class Toolbox:\n"
+            "    @tool\n"
+            "    def ping(self) -> str:\n"
+            "        '''Return a heartbeat.'''\n"
+            "        return 'ok'\n"
+        )
+        self.assertEqual(record.name, "ping")
+
+    def test_stacked_decorators_yield_one_record(self):
+        records, _ = scan(
+            "import functools\n"
+            "from agent_framework import tool\n"
+            "@functools.wraps(print)\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Return a heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        self.assertEqual(len(records), 1)
+
+    def test_multiple_tools_in_one_module(self):
+        records, _ = scan(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def one() -> str:\n"
+            "    '''First.'''\n"
+            "    return ''\n"
+            "@tool\n"
+            "def two() -> str:\n"
+            "    '''Second.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual([record.name for record in records], ["one", "two"])
+
+
+class ApprovalModeTests(unittest.TestCase):
+    def mode(self, decorator: str):
+        return only(
+            "from agent_framework import tool\n"
+            f"{decorator}\n"
+            "def ping() -> str:\n"
+            "    '''Return a heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+
+    def test_always_require_is_gated(self):
+        record = self.mode("@tool(approval_mode='always_require')")
+        self.assertEqual(record.approval_mode, "always_require")
+        self.assertTrue(record.approval_mode_explicit)
+        self.assertTrue(record.gated)
+
+    def test_never_require_is_not_gated(self):
+        record = self.mode("@tool(approval_mode='never_require')")
+        self.assertEqual(record.approval_mode, "never_require")
+        self.assertTrue(record.approval_mode_explicit)
+        self.assertFalse(record.gated)
+
+    def test_absent_mode_defaults_to_never_require(self):
+        record = self.mode("@tool")
+        self.assertEqual(record.approval_mode, "never_require")
+        self.assertFalse(record.approval_mode_explicit)
+        self.assertFalse(record.gated)
+
+    def test_conditional_is_gated_but_annotated(self):
+        record = self.mode("@tool(approval_mode='conditional')")
+        self.assertTrue(record.gated)
+        self.assertTrue(any("conditional" in note for note in record.notes))
+
+    def test_dynamic_mode_is_reported_as_unreadable(self):
+        record = self.mode("@tool(approval_mode=CHOSEN_MODE)")
+        self.assertEqual(record.approval_mode, inventory_tools.DYNAMIC_APPROVAL_MODE)
+        self.assertTrue(record.approval_mode_explicit)
+        self.assertFalse(record.gated)
+        self.assertTrue(any("statically" in note for note in record.notes))
+
+    def test_undocumented_mode_is_flagged(self):
+        record = self.mode("@tool(approval_mode='sometimes')")
+        self.assertTrue(any("documented modes" in note for note in record.notes))
+
+    def test_name_keyword_overrides_function_name(self):
+        record = self.mode("@tool(name='heartbeat')")
+        self.assertEqual(record.name, "heartbeat")
+        self.assertEqual(record.function, "ping")
+
+    def test_non_string_name_falls_back_to_function_name(self):
+        record = self.mode("@tool(name=NAME_CONSTANT)")
+        self.assertEqual(record.name, "ping")
+
+
+class WriteSignalTests(unittest.TestCase):
+    def test_body_call_to_write_verb(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def act(payload: str) -> str:\n"
+            "    '''Do a thing.'''\n"
+            "    return client.create_record(payload)\n"
+        )
+        self.assertEqual(record.proposed_write, "write")
+
+    def test_http_write_method(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def act(payload: str) -> str:\n"
+            "    '''Do a thing.'''\n"
+            "    return requests.put(URL, json=payload)\n"
+        )
+        self.assertEqual(record.proposed_write, "write")
+
+    def test_file_opened_for_writing(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def act(path: str) -> str:\n"
+            "    '''Do a thing.'''\n"
+            "    handle = open(path, 'w')\n"
+            "    return path\n"
+        )
+        self.assertEqual(record.proposed_write, "write")
+
+    def test_file_opened_for_reading_is_not_a_write(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def fetch(path: str) -> str:\n"
+            "    '''Read a stored value.'''\n"
+            "    handle = open(path, 'r')\n"
+            "    return path\n"
+        )
+        self.assertEqual(record.proposed_write, "read")
+
+    def test_data_modifying_sql_literal(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def act(row_id: str) -> str:\n"
+            "    '''Do a thing.'''\n"
+            "    return run('DELETE FROM invoices WHERE id = ?', row_id)\n"
+        )
+        self.assertEqual(record.proposed_write, "write")
+
+    def test_select_sql_literal_is_not_a_write(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def fetch(row_id: str) -> str:\n"
+            "    '''Read a row.'''\n"
+            "    return run('SELECT total FROM invoices WHERE id = ?', row_id)\n"
+        )
+        self.assertEqual(record.proposed_write, "read")
+
+    def test_pure_read_has_no_write_signal(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def fetch(row_id: str) -> str:\n"
+            "    '''Look up a stored value by identifier.'''\n"
+            "    return cache.get(row_id)\n"
+        )
+        self.assertEqual(record.proposed_write, "read")
+
+    def test_stdlib_close_call_is_not_a_write(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def fetch(path: str) -> str:\n"
+            "    '''Look up a stored value.'''\n"
+            "    handle = open(path)\n"
+            "    body = handle.read()\n"
+            "    handle.close()\n"
+            "    return body\n"
+        )
+        self.assertEqual(record.proposed_write, "read")
+
+    def test_noun_order_in_docstring_is_not_a_write(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def search_orders(query: str) -> str:\n"
+            "    '''Search order history and return matching orders.'''\n"
+            "    return index.query(query)\n"
+        )
+        self.assertEqual(record.proposed_write, "read")
+
+    def test_write_verb_in_tool_name(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def cancel_booking(booking_id: str) -> str:\n"
+            "    '''Stop a reservation.'''\n"
+            "    return backend.run(booking_id)\n"
+        )
+        self.assertEqual(record.proposed_write, "write")
+
+
+class ExternalSignalTests(unittest.TestCase):
+    def test_external_term_in_name(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def send_invoice(to: str) -> str:\n"
+            "    '''Deliver a document.'''\n"
+            "    return gateway.post(to)\n"
+        )
+        self.assertEqual(record.proposed_visibility, "external")
+
+    def test_external_term_in_docstring(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def dispatch(body: str) -> str:\n"
+            "    '''Publish the note to the customer portal.'''\n"
+            "    return gateway.post(body)\n"
+        )
+        self.assertEqual(record.proposed_visibility, "external")
+
+    def test_internal_tool_is_not_external(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def add_internal_note(body: str) -> str:\n"
+            "    '''Create a note colleagues can edit.'''\n"
+            "    return store.save(body)\n"
+        )
+        self.assertEqual(record.proposed_visibility, "internal-or-unknown")
+
+    def test_external_read_is_annotated(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def lookup_customer(customer_id: str) -> str:\n"
+            "    '''Look up a customer record.'''\n"
+            "    return store.get(customer_id)\n"
+        )
+        self.assertEqual(record.proposed_write, "read")
+        self.assertTrue(any("only reads" in note for note in record.notes))
+
+
+class BlastRadiusTests(unittest.TestCase):
+    def test_collection_annotation(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def notify(targets: list[str]) -> str:\n"
+            "    '''Send a note.'''\n"
+            "    return str(targets)\n"
+        )
+        self.assertEqual(record.proposed_blast, "many")
+
+    def test_collection_parameter_name(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def notify(recipients) -> str:\n"
+            "    '''Send a note.'''\n"
+            "    return str(recipients)\n"
+        )
+        self.assertEqual(record.proposed_blast, "many")
+
+    def test_suffixed_parameter_name(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def notify(ticket_ids) -> str:\n"
+            "    '''Send a note.'''\n"
+            "    return str(ticket_ids)\n"
+        )
+        self.assertEqual(record.proposed_blast, "many")
+
+    def test_bulk_term_in_name(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def bulk_update(target: str) -> str:\n"
+            "    '''Change a value.'''\n"
+            "    return target\n"
+        )
+        self.assertEqual(record.proposed_blast, "many")
+
+    def test_write_inside_loop(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def process(rows) -> str:\n"
+            "    '''Handle rows.'''\n"
+            "    for row in rows:\n"
+            "        store.save(row)\n"
+            "    return 'done'\n"
+        )
+        self.assertEqual(record.proposed_blast, "many")
+        self.assertIn(
+            "writes inside a loop",
+            [signal.evidence for signal in record.signals],
+        )
+
+    def test_single_target_is_one(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def update_record(record_id: str) -> str:\n"
+            "    '''Change one stored value.'''\n"
+            "    return record_id\n"
+        )
+        self.assertEqual(record.proposed_blast, "one")
+
+
+class GoDetectionTests(unittest.TestCase):
+    def test_wrapped_tool_is_gated(self):
+        records, _ = inventory_tools.scan_go(
+            'approvedWeatherTool := tool.ApprovalRequiredFunc(weatherTool)\n', "main.go"
+        )
+        gated = {record.name: record.gated for record in records}
+        self.assertTrue(gated["weatherTool"])
+
+    def test_unwrapped_binding_is_ungated(self):
+        records, _ = inventory_tools.scan_go(
+            "weatherTool := tool.NewFunc(getWeather)\n"
+            "deleteTool := tool.NewFunc(deleteFile)\n"
+            "approved := tool.ApprovalRequiredFunc(weatherTool)\n",
+            "main.go",
+        )
+        gated = {record.name: record.gated for record in records}
+        self.assertTrue(gated["weatherTool"])
+        self.assertFalse(gated["deleteTool"])
+
+    def test_go_records_are_best_effort_and_annotated(self):
+        records, _ = inventory_tools.scan_go(
+            "weatherTool := tool.NewFunc(getWeather)\n", "main.go"
+        )
+        self.assertEqual(records[0].detection, "best-effort")
+        self.assertTrue(any("best-effort" in note for note in records[0].notes))
+
+    def test_unrelated_go_code_yields_nothing(self):
+        records, _ = inventory_tools.scan_go(
+            "client := http.NewClient()\nfmt.Println(client)\n", "main.go"
+        )
+        self.assertEqual(records, [])
+
+
+class FileHandlingTests(unittest.TestCase):
+    def build(self, files: dict[str, str], **kwargs):
+        directory = Path(tempfile.mkdtemp())
+        for name, body in files.items():
+            path = directory / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        return directory, inventory_tools.build_inventory(
+            directory, kwargs.get("languages", {"python", "go"}), kwargs.get("include_tests", False)
+        )
+
+    def test_unparseable_python_is_noted_not_fatal(self):
+        _, inventory = self.build({"broken.py": "def oops(:\n"})
+        self.assertEqual(inventory.tools, [])
+        self.assertTrue(any("could not be parsed" in note for note in inventory.notes))
+
+    def test_non_utf8_file_is_noted_not_fatal(self):
+        directory = Path(tempfile.mkdtemp())
+        (directory / "binary.py").write_bytes(b"\xff\xfe\x00bad bytes\n")
+        inventory = inventory_tools.build_inventory(directory, {"python"}, False)
+        self.assertTrue(any("could not be read" in note for note in inventory.notes))
+
+    def test_test_files_are_skipped_by_default(self):
+        body = (
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        _, inventory = self.build({"test_thing.py": body})
+        self.assertEqual(inventory.tools, [])
+
+    def test_test_files_are_included_on_request(self):
+        body = (
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        _, inventory = self.build({"test_thing.py": body}, include_tests=True)
+        self.assertEqual(len(inventory.tools), 1)
+
+    def test_vendor_directories_are_skipped(self):
+        body = (
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        _, inventory = self.build({"node_modules/pkg/thing.py": body})
+        self.assertEqual(inventory.tools, [])
+
+    def test_language_filter_excludes_go(self):
+        directory, _ = self.build({"main.go": "t := tool.NewFunc(f)\n"})
+        inventory = inventory_tools.build_inventory(directory, {"python"}, False)
+        self.assertEqual(inventory.tools, [])
+
+    def test_sources_are_posix_relative_paths(self):
+        body = (
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        _, inventory = self.build({"pkg/agent.py": body})
+        self.assertEqual(inventory.tools[0].source, "pkg/agent.py")
+
+
+class OutputAndExitCodeTests(unittest.TestCase):
+    def run_cli(self, argv: list[str]) -> tuple[int, str]:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = inventory_tools.main(argv)
+        return code, buffer.getvalue()
+
+    def test_json_output_shape(self):
+        code, out = self.run_cli(["assets/samples", "--format", "json"])
+        payload = json.loads(out)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["inventory"], inventory_tools.INVENTORY_NAME)
+        self.assertEqual(payload["version"], inventory_tools.INVENTORY_VERSION)
+        for key in ("root", "counts", "tools", "notes", "disclaimer"):
+            self.assertIn(key, payload)
+        first = payload["tools"][0]
+        for key in (
+            "name",
+            "language",
+            "detection",
+            "approval_mode",
+            "approval_mode_explicit",
+            "gated",
+            "proposed_write",
+            "proposed_visibility",
+            "proposed_blast",
+            "signals",
+            "notes",
+        ):
+            self.assertIn(key, first)
+
+    def test_table_output_carries_the_honesty_footer(self):
+        _, out = self.run_cli(["assets/samples"])
+        self.assertIn("Signals are advisory evidence, not verdicts.", out)
+
+    def test_clean_run_exits_zero(self):
+        code, _ = self.run_cli(["assets/samples"])
+        self.assertEqual(code, 0)
+
+    def test_fail_on_ungated_write_exits_one(self):
+        code, _ = self.run_cli(["assets/samples", "--fail-on", "ungated-write"])
+        self.assertEqual(code, 1)
+
+    def test_fail_on_ungated_write_external_exits_one(self):
+        code, _ = self.run_cli(["assets/samples", "--fail-on", "ungated-write-external"])
+        self.assertEqual(code, 1)
+
+    def test_missing_path_exits_two(self):
+        buffer = io.StringIO()
+        with contextlib.redirect_stderr(buffer):
+            code = inventory_tools.main(["does/not/exist"])
+        self.assertEqual(code, 2)
+        self.assertIn("Path not found", buffer.getvalue())
+
+    def test_gate_does_not_trigger_on_a_fully_gated_corpus(self):
+        directory = Path(tempfile.mkdtemp())
+        (directory / "agent.py").write_text(
+            "from agent_framework import tool\n"
+            "@tool(approval_mode='always_require')\n"
+            "def send_customer_email(to: str) -> str:\n"
+            "    '''Send an email to a customer.'''\n"
+            "    return to\n",
+            encoding="utf-8",
+        )
+        code, _ = self.run_cli([directory.as_posix(), "--fail-on", "ungated-write"])
+        self.assertEqual(code, 0)
+
+
+class ShippedFixtureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.inventory = inventory_tools.build_inventory(
+            SUBMISSION_ROOT / "assets" / "samples", {"python"}, False
+        )
+        cls.by_name = {record.name: record for record in cls.inventory.tools}
+
+    def test_fixture_contains_the_expected_tools(self):
+        self.assertEqual(
+            sorted(self.by_name),
+            [
+                "close_tickets",
+                "draft_internal_note",
+                "issue_refund",
+                "lookup_customer",
+                "purge_export_files",
+                "search_orders",
+                "send_customer_email",
+                "update_subscription",
+            ],
+        )
+
+    def test_fixture_read_tools_are_not_flagged_as_writes(self):
+        self.assertEqual(self.by_name["lookup_customer"].proposed_write, "read")
+        self.assertEqual(self.by_name["search_orders"].proposed_write, "read")
+
+    def test_fixture_exposes_an_ungated_irreversible_external_tool(self):
+        record = self.by_name["send_customer_email"]
+        self.assertFalse(record.gated)
+        self.assertEqual(record.proposed_write, "write")
+        self.assertEqual(record.proposed_visibility, "external")
+        self.assertTrue(record.needs_urgent_attention)
+
+    def test_fixture_bulk_tool_shows_blast_radius(self):
+        record = self.by_name["close_tickets"]
+        self.assertTrue(record.gated)
+        self.assertEqual(record.proposed_blast, "many")
+
+    def test_fixture_conditional_tool_is_annotated(self):
+        record = self.by_name["update_subscription"]
+        self.assertEqual(record.approval_mode, "conditional")
+        self.assertTrue(any("conditional" in note for note in record.notes))
+
+    def test_fixture_renamed_tool_uses_the_declared_name(self):
+        record = self.by_name["purge_export_files"]
+        self.assertEqual(record.function, "purge_exports")
+        self.assertEqual(record.proposed_write, "write")
+
+    def test_fixture_counts(self):
+        counts = self.inventory.counts()
+        self.assertEqual(counts["tools"], 8)
+        self.assertEqual(counts["gated"], 3)
+        self.assertEqual(counts["ungated_write_external"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
