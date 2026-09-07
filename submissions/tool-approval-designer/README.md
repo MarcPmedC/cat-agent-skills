@@ -143,6 +143,10 @@ file itself, is skipped with a note rather than reported with an `approval_mode`
 it does not have. A bare `@tool` with no traceable import is kept and marked
 `best-effort`.
 
+Test files and `tests/` directories are skipped when scanning a directory, unless
+you pass `--include-tests`. A file you name directly is always read, including a
+test file, on the basis that pointing at a path is an explicit request.
+
 Regression tests, from the same directory:
 
 ```bash
@@ -150,14 +154,14 @@ python scripts/tests/test_inventory_tools.py
 python scripts/tests/test_approval_renderer.py
 ```
 
-96 tests covering decorator and alias detection, decorator provenance, approval
+102 tests covering decorator and alias detection, decorator provenance, approval
 mode reading, write and external and blast-radius signals, the false positives
-that the vocabularies are tuned to avoid, best-effort Go detection, file handling
-including BOM-prefixed sources, summary agreement, output shape, and exit codes.
-A further 14 cover the shipped approval renderer template, most importantly that
-redaction is case-insensitive on both the argument name and the declared
-redaction list, since that is the boundary keeping a secret out of the approval
-text a human reads.
+that the vocabularies are tuned to avoid, best-effort Go detection and its line
+attribution, file handling including BOM-prefixed sources and explicitly named
+paths, summary agreement, output shape, and exit codes. A further 14 cover the
+shipped approval renderer template, most importantly that redaction is
+case-insensitive on both the argument name and the declared redaction list, since
+that is the boundary keeping a secret out of the approval text a human reads.
 ## Verified product facts, with sources
 
 Every product claim the skill makes traces to one of these. Details are in

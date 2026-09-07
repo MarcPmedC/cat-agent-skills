@@ -644,6 +644,51 @@ class GoDetectionTests(unittest.TestCase):
         )
         self.assertEqual(records, [])
 
+    def test_binding_line_points_at_the_declaration(self):
+        records, _ = inventory_tools.scan_go(
+            "package main\n"
+            "\n"
+            "weatherTool := tool.NewFunc(getWeather)\n"
+            "\n"
+            "approved := tool.ApprovalRequiredFunc(weatherTool)\n",
+            "main.go",
+        )
+        record = next(r for r in records if r.name == "weatherTool")
+        self.assertEqual(record.line, 3)
+
+    def test_binding_line_survives_a_blank_line_above_it(self):
+        """The pattern's leading '^\\s*' must not be counted as the line."""
+        records, _ = inventory_tools.scan_go(
+            "package main\n\n\n\nrefundTool := tool.NewFunc(issueRefund)\n",
+            "main.go",
+        )
+        self.assertEqual(records[0].line, 5)
+
+    def test_wrapped_only_tool_points_at_the_approval_call(self):
+        """A tool declared elsewhere must not be reported at line 0."""
+        records, _ = inventory_tools.scan_go(
+            "package main\n"
+            "\n"
+            "func main() {\n"
+            "\tagent.Run(tool.ApprovalRequiredFunc(weatherTool))\n"
+            "}\n",
+            "main.go",
+        )
+        record = next(r for r in records if r.name == "weatherTool")
+        self.assertEqual(record.line, 4)
+        self.assertTrue(
+            any("declaration was not found" in note for note in record.notes)
+        )
+
+    def test_no_go_record_is_ever_emitted_at_line_zero(self):
+        records, _ = inventory_tools.scan_go(
+            "weatherTool := tool.NewFunc(getWeather)\n"
+            "agent.Run(tool.ApprovalRequiredFunc(refundTool))\n",
+            "main.go",
+        )
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(record.line > 0 for record in records))
+
 
 class FileHandlingTests(unittest.TestCase):
     def build(self, files: dict[str, str], **kwargs):
@@ -704,6 +749,32 @@ class FileHandlingTests(unittest.TestCase):
         )
         _, inventory = self.build({"test_thing.py": body}, include_tests=True)
         self.assertEqual(len(inventory.tools), 1)
+
+    def test_an_explicitly_named_test_file_is_read(self):
+        """Pointing at a file is an explicit request, not a directory sweep."""
+        body = (
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        directory = Path(tempfile.mkdtemp())
+        (directory / "tests").mkdir()
+        path = directory / "tests" / "test_thing.py"
+        path.write_text(body, encoding="utf-8")
+        inventory = inventory_tools.build_inventory(path, {"python"}, False)
+        self.assertEqual([record.name for record in inventory.tools], ["ping"])
+
+    def test_an_explicit_file_the_inventory_cannot_read_is_noted(self):
+        directory = Path(tempfile.mkdtemp())
+        path = directory / "README.md"
+        path.write_text("not source\n", encoding="utf-8")
+        inventory = inventory_tools.build_inventory(path, {"python"}, False)
+        self.assertEqual(inventory.tools, [])
+        self.assertTrue(
+            any("does not read" in note for note in inventory.notes)
+        )
 
     def test_vendor_directories_are_skipped(self):
         body = (

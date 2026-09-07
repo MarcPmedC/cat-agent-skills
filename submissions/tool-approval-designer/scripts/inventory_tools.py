@@ -665,17 +665,38 @@ def scan_python(text: str, source: str) -> tuple[list[ToolRecord], list[str]]:
 
 
 def scan_go(text: str, source: str) -> tuple[list[ToolRecord], list[str]]:
-    wrapped = {match.group(1) for match in GO_APPROVAL_WRAP.finditer(text)}
+    wrapped: dict[str, int] = {}
+    for match in GO_APPROVAL_WRAP.finditer(text):
+        wrapped.setdefault(match.group(1), text.count("\n", 0, match.start()) + 1)
+
     bindings: dict[str, int] = {}
     for match in GO_TOOL_BINDING.finditer(text):
         identifier, constructor = match.group(1), match.group(2)
         if constructor == "ApprovalRequiredFunc":
             continue
-        bindings.setdefault(identifier, text.count("\n", 0, match.start()) + 1)
+        # Measure from the identifier, not the match: the pattern's leading
+        # '^\s*' swallows the preceding newline, so match.start() reports the
+        # blank line above any declaration that has one.
+        bindings.setdefault(identifier, text.count("\n", 0, match.start(1)) + 1)
 
     records: list[ToolRecord] = []
-    for identifier in sorted(set(bindings) | wrapped):
+    for identifier in sorted(set(bindings) | set(wrapped)):
         gated = identifier in wrapped
+        notes = [
+            "Go detection is best-effort: a bounded regular-expression match, not "
+            "a parse. Signals are not extracted, so answer all four questions "
+            "manually."
+        ]
+        # A tool declared in another file has no binding here. Point at the
+        # approval call rather than emitting a line 0 nobody can navigate to.
+        if identifier in bindings:
+            line = bindings[identifier]
+        else:
+            line = wrapped[identifier]
+            notes.append(
+                "The declaration was not found in this file, so the line points at "
+                "the tool.ApprovalRequiredFunc call, not at the tool itself."
+            )
         records.append(
             ToolRecord(
                 name=identifier,
@@ -683,7 +704,7 @@ def scan_go(text: str, source: str) -> tuple[list[ToolRecord], list[str]]:
                 language="go",
                 detection="best-effort",
                 source=source,
-                line=bindings.get(identifier, 0),
+                line=line,
                 docstring="",
                 parameters=[],
                 approval_mode="always_require" if gated else DEFAULT_APPROVAL_MODE,
@@ -693,11 +714,7 @@ def scan_go(text: str, source: str) -> tuple[list[ToolRecord], list[str]]:
                 proposed_visibility="internal-or-unknown",
                 proposed_blast="one",
                 signals=[],
-                notes=[
-                    "Go detection is best-effort: a bounded regular-expression match, not "
-                    "a parse. Signals are not extracted, so answer all four questions "
-                    "manually."
-                ],
+                notes=notes,
             )
         )
     return records, []
@@ -708,23 +725,33 @@ def scan_go(text: str, source: str) -> tuple[list[ToolRecord], list[str]]:
 # --------------------------------------------------------------------------
 
 
-def iter_source_files(root: Path, languages: set[str], include_tests: bool):
+def source_suffixes(languages: set[str]) -> set[str]:
     suffixes = set()
     if "python" in languages:
         suffixes.add(".py")
     if "go" in languages:
         suffixes.add(".go")
+    return suffixes
+
+
+def iter_source_files(root: Path, languages: set[str], include_tests: bool):
+    suffixes = source_suffixes(languages)
 
     if root.is_file():
-        candidates = [root] if root.suffix in suffixes else []
-    else:
-        candidates = sorted(
-            path
-            for path in root.rglob("*")
-            if path.is_file()
-            and path.suffix in suffixes
-            and not SKIP_DIRECTORIES.intersection(path.parts)
-        )
+        # An explicit path is an explicit request. Honour it even when the name
+        # looks like a test, rather than returning a silently empty inventory
+        # and making the caller guess that --include-tests was the problem.
+        if root.suffix in suffixes:
+            yield root
+        return
+
+    candidates = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file()
+        and path.suffix in suffixes
+        and not SKIP_DIRECTORIES.intersection(path.parts)
+    )
 
     for path in candidates:
         if not include_tests and (
@@ -745,6 +772,12 @@ def build_inventory(
     root: Path, languages: set[str], include_tests: bool
 ) -> Inventory:
     inventory = Inventory(root=root.as_posix())
+    if root.is_file() and root.suffix not in source_suffixes(languages):
+        inventory.notes.append(
+            f"{root.as_posix()}: skipped, this inventory reads "
+            f"{', '.join(sorted(source_suffixes(languages))) or 'no suffixes'} and "
+            "was pointed at a file it does not read."
+        )
     for path in iter_source_files(root, languages, include_tests):
         source = relative_source(path, root)
         try:
@@ -911,7 +944,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--include-tests",
         action="store_true",
-        help="Include test files and tests/ directories, which are skipped by default.",
+        help=(
+            "Include test files and tests/ directories when scanning a directory. "
+            "They are skipped by default. A file passed directly is always read."
+        ),
     )
     parser.add_argument(
         "--version", action="version", version=f"{INVENTORY_NAME} {INVENTORY_VERSION}"
