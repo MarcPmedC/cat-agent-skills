@@ -136,17 +136,23 @@ writes and looks externally visible. It cannot tell you whether the effect is
 truly irreversible, and it cannot read the logic behind `approval_mode="conditional"`.
 Its output is the first column of the matrix, never the matrix.
 
+It is also conservative about what it claims. `@tool` is a common decorator name,
+so a tool is only reported as `parsed` when the decorator traces to an
+`agent_framework` import. One borrowed from another library, or defined in the
+file itself, is skipped with a note rather than reported with an `approval_mode`
+it does not have. A bare `@tool` with no traceable import is kept and marked
+`best-effort`.
+
 Regression tests, from the same directory:
 
 ```bash
 python scripts/tests/test_inventory_tools.py
 ```
 
-64 tests covering decorator and alias detection, approval mode reading, write and
-external and blast-radius signals, the false positives that the vocabularies are
-tuned to avoid, best-effort Go detection, file handling, output shape, and exit
-codes.
-
+94 tests covering decorator and alias detection, decorator provenance, approval
+mode reading, write and external and blast-radius signals, the false positives
+that the vocabularies are tuned to avoid, best-effort Go detection, file handling
+including BOM-prefixed sources, summary agreement, output shape, and exit codes.
 ## Verified product facts, with sources
 
 Every product claim the skill makes traces to one of these. Details are in
@@ -172,7 +178,9 @@ Every product claim the skill makes traces to one of these. Details are in
   conversation is **this skill's proposed heuristic**, not a Microsoft standard.
   Override it with your own and the record will say which one was applied.
 - The parser reads Python properly, detects Go on a best-effort basis, and does not
-  read C# at all.
+  read C# at all. It only claims a Python `@tool` it can trace to an
+  `agent_framework` import; anything else is skipped or flagged, never silently
+  counted.
 - Approval is not authorization. A gate records a click. Least privilege in the
   underlying system is still your job.
 

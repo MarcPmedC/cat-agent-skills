@@ -55,6 +55,22 @@ Source: [Human-in-the-Loop with AG-UI](https://learn.microsoft.com/en-us/agent-f
 A tool with no `approval_mode` is therefore ungated. Absence of the argument is a
 decision, not an omission, and the decision record must say which one it was.
 
+### What the inventory will and will not claim
+
+`@tool` is not a reserved name. Several unrelated libraries export one, and a codebase
+can define its own. Reading every `@tool` as an Agent Framework tool would report an
+`approval_mode` column for tools that have no such concept, which is worse than
+reporting nothing. `inventory_tools.py` therefore attributes before it claims:
+
+| What the file shows | Reported as |
+|---|---|
+| `from agent_framework import tool`, a submodule import, an alias, `import agent_framework as af` with `@af.tool`, or a star import from `agent_framework` | `parsed` |
+| `tool` imported from any other module, or defined in the file itself | not reported; a note names the module it came from |
+| a bare `@tool` with nothing in the file to trace it to | `best-effort`, with a note on the record |
+
+When a run reports fewer tools than the maker expects, read the notes before
+concluding the codebase is clean. A skipped file is not an empty one.
+
 ### What a gated run returns
 
 An agent run that requires user input completes with a response indicating what input is

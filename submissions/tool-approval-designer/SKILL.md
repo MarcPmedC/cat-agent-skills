@@ -149,6 +149,13 @@ The script emits **signals, not verdicts**. It cannot see whether an effect is
 truly irreversible, and it cannot read `conditional` logic. Treat its output as
 the first column of the matrix, never as the matrix.
 
+It also only claims tools it can attribute. A `@tool` traced to an
+`agent_framework` import is reported as `parsed`. A `@tool` that came from
+another library, or that is defined in the file itself, is **skipped with a
+note**, because its `approval_mode` column would be fiction. A bare `@tool` with
+no traceable import is kept but marked `best-effort`. Read the notes: a skipped
+file is not the same as a file with no tools in it.
+
 Then ask the user **only what cannot be inferred**. Two or three questions total.
 Good questions look like: which of these writes reach a customer or a third party,
 which can a normal user undo without IT, and what is the risk appetite for the

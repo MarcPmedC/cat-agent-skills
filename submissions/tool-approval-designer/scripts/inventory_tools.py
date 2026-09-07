@@ -8,6 +8,13 @@ and blast radius.
 This script does not issue verdicts. It supplies evidence for the four questions
 in ``references/surfaces-and-contracts.md``; a human answers them and rules.
 
+It is deliberately conservative about what counts as a tool. ``@tool`` is a
+common decorator name, so a Python tool is only reported as ``parsed`` when the
+decorator can be traced to an ``agent_framework`` import. A ``@tool`` borrowed
+from another library, or defined in the file being read, is skipped with a note
+rather than reported with an ``approval_mode`` it does not have. A bare ``@tool``
+that cannot be traced at all is kept but labelled ``best-effort``.
+
 Standard library only. No third-party packages, no shell invocation, and no
 OS-specific paths, so the same command works on every runtime this skill
 targets.
@@ -167,6 +174,7 @@ HTTP_WRITE_METHODS = frozenset({"post", "put", "patch", "delete"})
 WRITE_FILE_MODES = frozenset({"w", "a", "x", "wb", "ab", "xb", "w+", "a+", "r+", "wt", "at"})
 
 APPROVAL_MODES = frozenset({"always_require", "never_require", "conditional"})
+AGENT_FRAMEWORK = "agent_framework"
 DEFAULT_APPROVAL_MODE = "never_require"
 GATING_MODES = frozenset({"always_require", "conditional"})
 DYNAMIC_APPROVAL_MODE = "<dynamic>"
@@ -276,38 +284,106 @@ class Inventory:
 # --------------------------------------------------------------------------
 
 
-def collect_tool_decorator_aliases(tree: ast.Module) -> tuple[set[str], set[str]]:
-    """Return (bare names, module aliases) that can introduce a ``@tool``."""
-    bare: set[str] = {"tool"}
-    modules: set[str] = {"agent_framework"}
+def is_agent_framework_module(name: str | None) -> bool:
+    return bool(name) and (
+        name == AGENT_FRAMEWORK or name.startswith(AGENT_FRAMEWORK + ".")
+    )
+
+
+class ToolProvenance:
+    """Where a ``@tool`` decorator in one file came from.
+
+    The inventory only claims to read Agent Framework tools, so a ``@tool``
+    borrowed from another library must not be reported as one. Detection is
+    therefore split three ways rather than answered yes or no.
+    """
+
+    CONFIRMED = "confirmed"  # traced to an agent_framework import
+    FOREIGN = "foreign"  # traced to something else, so not ours
+    UNATTRIBUTED = "unattributed"  # named 'tool' but nothing to trace it to
+
+
+@dataclass
+class ToolOrigins:
+    """Names in one module that could introduce a ``@tool`` decorator."""
+
+    confirmed: set[str]
+    foreign: dict[str, str]
+    modules: set[str]
+    star_imported: bool
+
+    def classify_bare(self, name: str) -> str | None:
+        if name in self.confirmed:
+            return ToolProvenance.CONFIRMED
+        if name in self.foreign:
+            return ToolProvenance.FOREIGN
+        if name == "tool":
+            return (
+                ToolProvenance.CONFIRMED
+                if self.star_imported
+                else ToolProvenance.UNATTRIBUTED
+            )
+        return None
+
+
+def collect_tool_decorator_aliases(tree: ast.Module) -> ToolOrigins:
+    """Classify every name in one module that could introduce a ``@tool``."""
+    confirmed: set[str] = set()
+    foreign: dict[str, str] = {}
+    modules: set[str] = {AGENT_FRAMEWORK}
+    star_imported = False
+
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
+            from_agent_framework = is_agent_framework_module(node.module)
             for alias in node.names:
-                if alias.name == "tool":
-                    bare.add(alias.asname or alias.name)
+                if alias.name == "*":
+                    if from_agent_framework:
+                        star_imported = True
+                    continue
+                if alias.name != "tool":
+                    continue
+                local = alias.asname or alias.name
+                if from_agent_framework:
+                    confirmed.add(local)
+                    foreign.pop(local, None)
+                elif local not in confirmed:
+                    foreign[local] = node.module or "a relative import"
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "agent_framework" or alias.name.startswith(
-                    "agent_framework."
-                ):
+                if is_agent_framework_module(alias.name):
                     modules.add(alias.asname or alias.name.split(".")[0])
-    return bare, modules
+
+    # A decorator defined in this file is this file's own, not the framework's.
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == "tool" and node.name not in confirmed:
+                foreign.setdefault("tool", "a definition in this file")
+
+    return ToolOrigins(
+        confirmed=confirmed,
+        foreign=foreign,
+        modules=modules,
+        star_imported=star_imported,
+    )
 
 
 def decorator_target(node: ast.expr) -> ast.expr:
     return node.func if isinstance(node, ast.Call) else node
 
 
-def is_tool_decorator(node: ast.expr, bare: set[str], modules: set[str]) -> bool:
+def tool_decorator_provenance(node: ast.expr, origins: ToolOrigins) -> str | None:
+    """Return a ``ToolProvenance`` value, or ``None`` if this is not a tool."""
     target = decorator_target(node)
     if isinstance(target, ast.Name):
-        return target.id in bare
+        return origins.classify_bare(target.id)
     if isinstance(target, ast.Attribute) and target.attr == "tool":
         root = target.value
         while isinstance(root, ast.Attribute):
             root = root.value
-        return isinstance(root, ast.Name) and root.id in modules
-    return False
+        if isinstance(root, ast.Name) and root.id in origins.modules:
+            return ToolProvenance.CONFIRMED
+    return None
 
 
 def unparse(node: ast.AST) -> str:
@@ -486,6 +562,7 @@ def build_record(
     node: ast.AST,
     decorator: ast.expr,
     source: str,
+    provenance: str = ToolProvenance.CONFIRMED,
 ) -> ToolRecord:
     function_name = node.name
     tool_name = read_tool_name(decorator, function_name)
@@ -512,11 +589,21 @@ def build_record(
             "this tool only reads externally-owned data."
         )
 
+    if provenance == ToolProvenance.UNATTRIBUTED:
+        notes.append(
+            "This file decorates with '@tool' but never imports it from "
+            f"{AGENT_FRAMEWORK}, so the decorator could not be traced. It is listed "
+            "as best-effort in case the import is indirect. Confirm it is an Agent "
+            "Framework tool before relying on the approval_mode column."
+        )
+
     return ToolRecord(
         name=tool_name,
         function=function_name,
         language="python",
-        detection="parsed",
+        detection=(
+            "parsed" if provenance == ToolProvenance.CONFIRMED else "best-effort"
+        ),
         source=source,
         line=node.lineno,
         docstring=summary,
@@ -538,16 +625,32 @@ def scan_python(text: str, source: str) -> tuple[list[ToolRecord], list[str]]:
     except SyntaxError as error:
         return [], [f"{source}: skipped, could not be parsed as Python ({error.msg})."]
 
-    bare, modules = collect_tool_decorator_aliases(tree)
+    origins = collect_tool_decorator_aliases(tree)
     records: list[ToolRecord] = []
+    skipped: dict[str, int] = {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for decorator in node.decorator_list:
-            if is_tool_decorator(decorator, bare, modules):
-                records.append(build_record(node, decorator, source))
+            provenance = tool_decorator_provenance(decorator, origins)
+            if provenance is None:
+                continue
+            if provenance == ToolProvenance.FOREIGN:
+                target = decorator_target(decorator)
+                origin = origins.foreign.get(getattr(target, "id", ""), "elsewhere")
+                skipped[origin] = skipped.get(origin, 0) + 1
                 break
-    return records, []
+            records.append(build_record(node, decorator, source, provenance))
+            break
+
+    notes: list[str] = []
+    for origin in sorted(skipped):
+        count = skipped[origin]
+        notes.append(
+            f"{source}: skipped {quantify(count, 'decorated function')} because "
+            f"'tool' comes from {origin}, not {AGENT_FRAMEWORK}."
+        )
+    return records, notes
 
 
 # --------------------------------------------------------------------------
@@ -639,7 +742,9 @@ def build_inventory(
     for path in iter_source_files(root, languages, include_tests):
         source = relative_source(path, root)
         try:
-            text = path.read_text(encoding="utf-8")
+            # utf-8-sig, not utf-8: CPython accepts a source file with a BOM, so
+            # a Windows-authored tool file must not be reported as unparseable.
+            text = path.read_text(encoding="utf-8-sig")
         except (UnicodeDecodeError, OSError) as error:
             inventory.notes.append(f"{source}: skipped, could not be read ({error}).")
             continue

@@ -160,6 +160,163 @@ class DecoratorDetectionTests(unittest.TestCase):
         self.assertEqual([record.name for record in records], ["one", "two"])
 
 
+class ToolProvenanceTests(unittest.TestCase):
+    """A '@tool' from another library is not an Agent Framework tool."""
+
+    def test_foreign_tool_import_is_not_inventoried(self):
+        records, notes = scan(
+            "from langchain_core.tools import tool\n"
+            "@tool\n"
+            "def send_email(to: str) -> str:\n"
+            "    '''Send an email.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(records, [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("langchain_core.tools", notes[0])
+        self.assertIn("not agent_framework", notes[0])
+
+    def test_aliased_foreign_tool_import_is_not_inventoried(self):
+        records, _ = scan(
+            "from langchain_core.tools import tool as lc_tool\n"
+            "@lc_tool(approval_mode='always_require')\n"
+            "def send_email(to: str) -> str:\n"
+            "    '''Send an email.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(records, [])
+
+    def test_locally_defined_tool_decorator_is_not_inventoried(self):
+        records, notes = scan(
+            "def tool(fn):\n"
+            "    return fn\n"
+            "@tool\n"
+            "def send_email(to: str) -> str:\n"
+            "    '''Send an email.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(records, [])
+        self.assertIn("a definition in this file", notes[0])
+
+    def test_skip_note_counts_agree_with_the_number_skipped(self):
+        _, notes = scan(
+            "from langchain_core.tools import tool\n"
+            "@tool\n"
+            "def one() -> str:\n"
+            "    '''First.'''\n"
+            "    return ''\n"
+            "@tool\n"
+            "def two() -> str:\n"
+            "    '''Second.'''\n"
+            "    return ''\n"
+        )
+        self.assertIn("2 decorated functions", notes[0])
+
+    def test_single_skip_note_is_singular(self):
+        _, notes = scan(
+            "from langchain_core.tools import tool\n"
+            "@tool\n"
+            "def one() -> str:\n"
+            "    '''First.'''\n"
+            "    return ''\n"
+        )
+        self.assertIn("1 decorated function", notes[0])
+        self.assertNotIn("1 decorated functions", notes[0])
+
+    def test_untraceable_tool_is_kept_but_marked_best_effort(self):
+        record = only(
+            "@tool\n"
+            "def send_email(to: str) -> str:\n"
+            "    '''Send an email.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(record.name, "send_email")
+        self.assertEqual(record.detection, "best-effort")
+        self.assertTrue(
+            any("could not be traced" in note for note in record.notes),
+            record.notes,
+        )
+
+    def test_traced_import_is_parsed_not_best_effort(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def send_email(to: str) -> str:\n"
+            "    '''Send an email.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(record.detection, "parsed")
+        self.assertEqual(record.notes, [])
+
+    def test_submodule_import_is_traced(self):
+        record = only(
+            "from agent_framework.tools import tool\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(record.detection, "parsed")
+
+    def test_star_import_is_traced(self):
+        record = only(
+            "from agent_framework import *\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(record.detection, "parsed")
+
+    def test_foreign_star_import_does_not_trace(self):
+        record = only(
+            "from langchain_core.tools import *\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(record.detection, "best-effort")
+
+    def test_a_foreign_import_does_not_suppress_a_real_one(self):
+        records, _ = scan(
+            "from langchain_core.tools import tool as lc_tool\n"
+            "from agent_framework import tool\n"
+            "@lc_tool\n"
+            "def foreign() -> str:\n"
+            "    '''Not ours.'''\n"
+            "    return ''\n"
+            "@tool\n"
+            "def ours() -> str:\n"
+            "    '''Ours.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual([record.name for record in records], ["ours"])
+
+    def test_module_qualified_decorator_needs_the_module_name(self):
+        records, _ = scan(
+            "import langchain as agents\n"
+            "@agents.tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(records, [])
+
+    def test_untraceable_tools_count_as_best_effort(self):
+        inventory = inventory_tools.Inventory(root=".", tools=[], notes=[])
+        inventory.tools.extend(
+            only(
+                "@tool\n"
+                "def ping() -> str:\n"
+                "    '''Heartbeat.'''\n"
+                "    return ''\n"
+            )
+            for _ in range(1)
+        )
+        self.assertEqual(inventory.counts()["best_effort"], 1)
+
+
 class ApprovalModeTests(unittest.TestCase):
     def mode(self, decorator: str):
         return only(
@@ -486,6 +643,22 @@ class FileHandlingTests(unittest.TestCase):
         (directory / "binary.py").write_bytes(b"\xff\xfe\x00bad bytes\n")
         inventory = inventory_tools.build_inventory(directory, {"python"}, False)
         self.assertTrue(any("could not be read" in note for note in inventory.notes))
+
+    def test_utf8_bom_file_is_parsed_not_skipped(self):
+        """CPython accepts a BOM in source, so the inventory must too."""
+        directory = Path(tempfile.mkdtemp())
+        body = (
+            "from agent_framework import tool\n"
+            "@tool(approval_mode='always_require')\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        (directory / "bom.py").write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))
+        inventory = inventory_tools.build_inventory(directory, {"python"}, False)
+        self.assertEqual([record.name for record in inventory.tools], ["ping"])
+        self.assertTrue(inventory.tools[0].gated)
+        self.assertEqual(inventory.notes, [])
 
     def test_test_files_are_skipped_by_default(self):
         body = (
