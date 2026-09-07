@@ -605,6 +605,148 @@ class OutputAndExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
+class SummaryAgreementTests(unittest.TestCase):
+    """The summary block must read correctly at a count of one and above one.
+
+    A count of exactly one is the case that regresses, because the plural form is
+    the one written first and the singular is the afterthought.
+    """
+
+    def render(self, files: dict[str, str]) -> str:
+        directory = Path(tempfile.mkdtemp())
+        for name, body in files.items():
+            (directory / name).write_text(body, encoding="utf-8")
+        inventory = inventory_tools.build_inventory(directory, {"python", "go"}, False)
+        return inventory_tools.render_table(inventory)
+
+    ONE_UNGATED_EXTERNAL_WRITE = (
+        "from agent_framework import tool\n"
+        "@tool\n"
+        "def send_customer_email(to: str, body: str) -> str:\n"
+        "    '''Send an email to a customer.'''\n"
+        "    return to\n"
+    )
+
+    TWO_UNGATED_EXTERNAL_WRITES = ONE_UNGATED_EXTERNAL_WRITE + (
+        "@tool\n"
+        "def publish_customer_notice(recipient: str) -> str:\n"
+        "    '''Publish a notice to a customer.'''\n"
+        "    return recipient\n"
+    )
+
+    # The clause that regressed: 'of which 1 also look externally visible.'
+
+    def test_singular_external_clause_uses_looks(self):
+        out = self.render({"agent.py": self.ONE_UNGATED_EXTERNAL_WRITE})
+        self.assertIn("of which 1 also looks externally visible.", out)
+        self.assertNotIn("also look externally visible", out)
+
+    def test_plural_external_clause_uses_look(self):
+        out = self.render({"agent.py": self.TWO_UNGATED_EXTERNAL_WRITES})
+        self.assertIn("of which 2 also look externally visible.", out)
+        self.assertNotIn("also looks externally", out)
+
+    def test_zero_external_clause_uses_look(self):
+        out = self.render(
+            {
+                "agent.py": (
+                    "from agent_framework import tool\n"
+                    "@tool\n"
+                    "def write_internal_log(entry: str) -> str:\n"
+                    "    '''Append an entry to the internal log.'''\n"
+                    "    return entry\n"
+                )
+            }
+        )
+        self.assertIn("of which 0 also look externally visible.", out)
+
+    # The sibling clauses in the same block.
+
+    def test_singular_ungated_tool_noun(self):
+        out = self.render({"agent.py": self.ONE_UNGATED_EXTERNAL_WRITE})
+        self.assertIn("Needs a ruling: 1 ungated tool with a write signal,", out)
+
+    def test_plural_ungated_tool_noun(self):
+        out = self.render({"agent.py": self.TWO_UNGATED_EXTERNAL_WRITES})
+        self.assertIn("Needs a ruling: 2 ungated tools with a write signal,", out)
+
+    def test_singular_tool_count_line(self):
+        out = self.render({"agent.py": self.ONE_UNGATED_EXTERNAL_WRITE})
+        self.assertIn("1 tool: 0 gated, 1 ungated.", out)
+        self.assertNotIn("1 tools:", out)
+
+    def test_plural_tool_count_line(self):
+        out = self.render({"agent.py": self.TWO_UNGATED_EXTERNAL_WRITES})
+        self.assertIn("2 tools: 0 gated, 2 ungated.", out)
+
+    def test_singular_signal_nouns(self):
+        out = self.render({"agent.py": self.ONE_UNGATED_EXTERNAL_WRITE})
+        self.assertIn("1 write signal,", out)
+        self.assertIn("1 external-visibility signal,", out)
+        self.assertIn("0 blast-radius signals.", out)
+
+    def test_plural_signal_nouns(self):
+        out = self.render({"agent.py": self.TWO_UNGATED_EXTERNAL_WRITES})
+        self.assertIn("2 write signals,", out)
+        self.assertIn("2 external-visibility signals,", out)
+
+    def test_singular_attention_header(self):
+        out = self.render({"agent.py": self.ONE_UNGATED_EXTERNAL_WRITE})
+        self.assertIn("Ungated tool with a write signal:", out)
+
+    def test_plural_attention_header(self):
+        out = self.render({"agent.py": self.TWO_UNGATED_EXTERNAL_WRITES})
+        self.assertIn("Ungated tools with a write signal:", out)
+
+    def test_singular_best_effort_line(self):
+        out = self.render(
+            {
+                "agent.go": (
+                    "package main\n"
+                    "func main() {\n"
+                    "\tagent.Run(tool.ApprovalRequiredFunc(weatherTool))\n"
+                    "}\n"
+                )
+            }
+        )
+        self.assertIn("1 entry is a best-effort match and may be incomplete.", out)
+        self.assertNotIn("1 entries", out)
+
+    def test_plural_best_effort_line(self):
+        out = self.render(
+            {
+                "agent.go": (
+                    "package main\n"
+                    "func main() {\n"
+                    "\tagent.Run(tool.ApprovalRequiredFunc(weatherTool))\n"
+                    "\tagent.Run(tool.ApprovalRequiredFunc(refundTool))\n"
+                    "}\n"
+                )
+            }
+        )
+        self.assertIn("2 entries are best-effort matches and may be incomplete.", out)
+
+    def test_empty_corpus_summary_is_singularly_correct(self):
+        out = self.render({"notes.py": "x = 1\n"})
+        self.assertIn("(no tools found)", out)
+        self.assertIn("0 tools: 0 gated, 0 ungated.", out)
+        self.assertIn("Needs a ruling: 0 ungated tools with a write signal,", out)
+
+    # The helpers themselves.
+
+    def test_quantify_helper(self):
+        self.assertEqual(inventory_tools.quantify(0, "tool"), "0 tools")
+        self.assertEqual(inventory_tools.quantify(1, "tool"), "1 tool")
+        self.assertEqual(inventory_tools.quantify(2, "tool"), "2 tools")
+        self.assertEqual(inventory_tools.quantify(1, "entry", "entries"), "1 entry")
+        self.assertEqual(inventory_tools.quantify(3, "entry", "entries"), "3 entries")
+
+    def test_agree_helper(self):
+        self.assertEqual(inventory_tools.agree(1, "looks", "look"), "looks")
+        self.assertEqual(inventory_tools.agree(0, "looks", "look"), "look")
+        self.assertEqual(inventory_tools.agree(2, "looks", "look"), "look")
+
+
 class ShippedFixtureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

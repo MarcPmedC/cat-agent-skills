@@ -8,6 +8,10 @@ The set is deliberately uneven. It contains a tool that is correctly ungated, a
 tool that is correctly gated, a tool that is irreversible and externally visible
 but ungated, a bulk operation whose per-call gate multiplies into a clicking
 exercise, and a tool whose gating logic is hidden behind ``conditional``.
+
+This module is read statically with ``ast`` and is never imported or executed by
+the inventory script or its tests. Importing it directly requires the
+``agent_framework`` package; nothing in this submission needs that to run.
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ workflow depends on. Every claim below is traceable to the cited source. Do not 
 this file with unverified API detail.
 
 Read the surface section for the runtime you are producing code for. Read the contracts
-section when assembling step 2, step 3, step 4, or step 8 output.
+section when assembling step 2, step 3, step 4, or step 9 output.
 
 ---
 
@@ -19,7 +19,7 @@ runtimes. State which one you are producing for before you produce anything.
 | Agent Framework, Python | `@tool(approval_mode=...)`, `result.user_input_requests` | **Fully covered.** Inventory is parsed, code is emitted. |
 | Agent Framework, Go | `tool.ApprovalRequiredFunc`, middleware | **Documented.** Best-effort inventory only, no emitted harness. |
 | Agent Framework, .NET | `ApprovalRequiredAIFunction` | **Documented.** Not parsed. Emit code only from the snippets below. |
-| Agent Framework Harness Agent | Queued requests, standing rules, optional heuristic auto-approval | **Documented.** Affects the step 6 session ruling. |
+| Agent Framework Harness Agent | Queued requests, standing rules, optional heuristic auto-approval | **Documented.** Affects the step 7 session ruling. |
 | Copilot Studio per-tool approval | Per-tool, per-agent toggle | **Roadmap-sourced only.** See section 6. No configuration steps. |
 | GitHub Copilot agent mode (Visual Studio, SSMS) | Allow once / for this session / always | **Prior art only.** Not a build target. See section 7. |
 
@@ -73,7 +73,7 @@ if result.user_input_requests:
 ```
 
 The framework gives you `name` and `arguments`. It does not give you a sentence a human
-can judge. Producing that sentence is step 3 of the workflow.
+can judge. Producing that sentence is step 4 of the workflow.
 
 ### Responding
 
@@ -160,7 +160,7 @@ await agent.RunAsync(approvalMessage, session);
 Reuse the same `AgentSession` when sending the response so the interrupted run can
 continue. `CreateResponse(false)` rejects.
 
-`inventory_tools.py` does not parse C#. For a .NET codebase, run step 1 as a guided
+`inventory_tools.py` does not parse C#. For a .NET codebase, run step 2 as a guided
 inventory instead: ask the user to list the tools registered on the agent, then continue
 from step 2 unchanged. Say plainly that the inventory was supplied rather than parsed.
 
@@ -186,7 +186,7 @@ Setting `DisableToolAutoApproval = true` removes only the standing-rule, queuing
 heuristic middleware. **It does not remove the approval requirement from an
 `ApprovalRequiredAIFunction`.**
 
-Consequence for step 6: on a Harness Agent, "approve for session" is not the only bypass
+Consequence for step 7: on a Harness Agent, "approve for session" is not the only bypass
 in play. A standing rule or a heuristic auto-approval callback is a permanent bypass, and
 it must be ruled on in the decision record with the same rigour as session unlock.
 
@@ -222,7 +222,8 @@ What this means for the skill:
   inventing it is the exact failure mode this section exists to prevent.
 * **Do not tell a user to go and switch it on.** Verify current availability in the product
   before acting on this section.
-* The three response options do map cleanly onto this skill's step 6 ruling, so a Copilot
+* The three announced response options would map onto this skill's step 7 ruling, so a
+  Copilot
   Studio design is still worth producing. Produce it as **portable intent**: which tools
   should gate, what the request should say, and whether approve-for-session is acceptable
   per tool. That intent survives whatever the shipped configuration surface turns out to be.
@@ -233,7 +234,7 @@ What this means for the skill:
 
 Source: [Use GitHub Copilot agent mode in SSMS](https://learn.microsoft.com/en-us/ssms/github-copilot/agent-mode).
 
-Cited because it is a shipped, documented answer to the session-unlock problem that step 6
+Cited because it is a shipped, documented answer to the session-unlock problem that step 7
 reasons about:
 
 | Option | Documented behaviour |

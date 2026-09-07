@@ -665,6 +665,18 @@ HONESTY_FOOTER = (
 )
 
 
+def quantify(count: int, singular: str, plural: str | None = None) -> str:
+    """Render a count with a noun that agrees with it: '1 tool', '3 tools'."""
+    if plural is None:
+        plural = singular + "s"
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def agree(count: int, singular: str, plural: str) -> str:
+    """Pick the verb form that agrees with a count: 'looks' against 'look'."""
+    return singular if count == 1 else plural
+
+
 def render_table(inventory: Inventory) -> str:
     headers = ["Tool", "Lang", "Approval", "Write", "External", "Blast", "Source"]
     rows = [
@@ -696,26 +708,34 @@ def render_table(inventory: Inventory) -> str:
     counts = inventory.counts()
     out.append("")
     out.append(
-        f"{counts['tools']} tools: {counts['gated']} gated, {counts['ungated']} ungated."
+        f"{quantify(counts['tools'], 'tool')}: "
+        f"{counts['gated']} gated, {counts['ungated']} ungated."
     )
     out.append(
-        f"{counts['write_signalled']} show a write signal, "
-        f"{counts['external_signalled']} an external-visibility signal, "
-        f"{counts['many_signalled']} a blast-radius signal."
+        "Signals: "
+        f"{quantify(counts['write_signalled'], 'write signal')}, "
+        f"{quantify(counts['external_signalled'], 'external-visibility signal')}, "
+        f"{quantify(counts['many_signalled'], 'blast-radius signal')}."
     )
     out.append(
-        f"Needs a ruling: {counts['ungated_write']} ungated with a write signal, "
-        f"of which {counts['ungated_write_external']} also look externally visible."
+        "Needs a ruling: "
+        f"{quantify(counts['ungated_write'], 'ungated tool')} with a write signal, "
+        f"of which {counts['ungated_write_external']} also "
+        f"{agree(counts['ungated_write_external'], 'looks', 'look')} externally visible."
     )
     if counts["best_effort"]:
         out.append(
-            f"{counts['best_effort']} entries are best-effort matches and may be incomplete."
+            f"{quantify(counts['best_effort'], 'entry', 'entries')} "
+            f"{agree(counts['best_effort'], 'is a best-effort match', 'are best-effort matches')} "
+            "and may be incomplete."
         )
 
     attention = [record for record in inventory.tools if record.needs_attention]
     if attention:
         out.append("")
-        out.append("Ungated tools with a write signal:")
+        out.append(
+            f"Ungated {agree(len(attention), 'tool', 'tools')} with a write signal:"
+        )
         for record in attention:
             evidence = "; ".join(
                 signal.evidence for signal in record.signals if signal.category == "write"

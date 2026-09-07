@@ -12,7 +12,10 @@ control flow with three things added that the docs leave to the maker:
 2. the request is rendered through ``approval_renderer`` so a human can judge it;
 3. a denial is handled deliberately instead of dead-ending or silently retrying.
 
-Requires ``agent_framework``. Adapt the marked sections; keep the shape.
+Requires ``agent_framework``, and expects ``approval_renderer.py`` to sit beside it:
+the import below is a sibling import, so copy both templates into the same package
+or adjust the import to wherever you put the renderer. Adapt the marked sections;
+keep the shape.
 """
 
 from __future__ import annotations
