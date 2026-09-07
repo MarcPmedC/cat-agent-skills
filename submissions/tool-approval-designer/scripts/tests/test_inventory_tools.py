@@ -437,6 +437,76 @@ class WriteSignalTests(unittest.TestCase):
         )
         self.assertEqual(record.proposed_write, "read")
 
+    def test_write_capable_mode_permutations_are_all_writes(self):
+        """Modes are order-independent flags, not a fixed vocabulary."""
+        for mode in (
+            "w", "a", "x", "wb", "ab", "xb", "wt", "at",
+            "wb+", "w+b", "w+", "a+", "ab+", "a+b",
+            "r+", "rb+", "r+b", "x+b", "xb+",
+        ):
+            with self.subTest(mode=mode):
+                record = only(
+                    "from agent_framework import tool\n"
+                    "@tool\n"
+                    "def act(path: str) -> str:\n"
+                    "    '''Do a thing.'''\n"
+                    f"    handle = open(path, {mode!r})\n"
+                    "    return path\n"
+                )
+                self.assertEqual(record.proposed_write, "write")
+
+    def test_read_only_mode_permutations_are_not_writes(self):
+        for mode in ("r", "rb", "rt", "br"):
+            with self.subTest(mode=mode):
+                record = only(
+                    "from agent_framework import tool\n"
+                    "@tool\n"
+                    "def fetch(path: str) -> str:\n"
+                    "    '''Read a stored value.'''\n"
+                    f"    handle = open(path, {mode!r})\n"
+                    "    return path\n"
+                )
+                self.assertEqual(record.proposed_write, "read")
+
+    def test_keyword_mode_argument_is_honoured(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def act(path: str) -> str:\n"
+            "    '''Do a thing.'''\n"
+            "    handle = open(path, mode='a+b')\n"
+            "    return path\n"
+        )
+        self.assertEqual(record.proposed_write, "write")
+
+    def test_runtime_mode_is_surfaced_not_downgraded(self):
+        """An unresolvable mode must not silently become read-only."""
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def act(path: str, mode: str) -> str:\n"
+            "    '''Do a thing.'''\n"
+            "    handle = open(path, mode)\n"
+            "    return path\n"
+        )
+        self.assertEqual(record.proposed_write, "write")
+        self.assertTrue(
+            any("computed at runtime" in signal.evidence for signal in record.signals)
+        )
+
+    def test_open_evidence_names_the_mode_it_found(self):
+        record = only(
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def act(path: str) -> str:\n"
+            "    '''Do a thing.'''\n"
+            "    handle = open(path, 'rb+')\n"
+            "    return path\n"
+        )
+        self.assertTrue(
+            any("'rb+'" in signal.evidence for signal in record.signals)
+        )
+
     def test_data_modifying_sql_literal(self):
         record = only(
             "from agent_framework import tool\n"

@@ -155,8 +155,9 @@ python scripts/tests/test_approval_renderer.py
 ```
 
 102 tests covering decorator and alias detection, decorator provenance, approval
-mode reading, write and external and blast-radius signals, the false positives
-that the vocabularies are tuned to avoid, best-effort Go detection and its line
+mode reading, write and external and blast-radius signals including every
+write-capable `open()` mode permutation, the false positives that the
+vocabularies are tuned to avoid, best-effort Go detection and its line
 attribution, file handling including BOM-prefixed sources and explicitly named
 paths, summary agreement, output shape, and exit codes. A further 14 cover the
 shipped approval renderer template, most importantly that redaction is

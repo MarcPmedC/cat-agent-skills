@@ -171,7 +171,11 @@ SQL_WRITE = re.compile(
 )
 
 HTTP_WRITE_METHODS = frozenset({"post", "put", "patch", "delete"})
-WRITE_FILE_MODES = frozenset({"w", "a", "x", "wb", "ab", "xb", "w+", "a+", "r+", "wt", "at"})
+# Python file modes are order-independent flag strings: exactly one of r, w, a
+# or x, optionally 'b' or 't' for the encoding, optionally '+' for update. Any
+# mode containing w, a, x or + can write, so test for those flags rather than
+# enumerating permutations, which misses 'wb+', 'w+b', 'rb+', 'x+b' and friends.
+WRITE_FILE_MODE_FLAGS = frozenset({"w", "a", "x", "+"})
 
 APPROVAL_MODES = frozenset({"always_require", "never_require", "conditional"})
 AGENT_FRAMEWORK = "agent_framework"
@@ -469,18 +473,27 @@ def call_name(node: ast.Call) -> str:
     return ""
 
 
-def opens_for_writing(node: ast.Call) -> bool:
+def open_write_evidence(node: ast.Call) -> str | None:
+    """Return evidence when an ``open()`` call can write, else ``None``."""
     if call_name(node) != "open":
-        return False
+        return None
     mode_node: ast.expr | None = None
     if len(node.args) >= 2:
         mode_node = node.args[1]
     for keyword in node.keywords:
         if keyword.arg == "mode":
             mode_node = keyword.value
+    if mode_node is None:
+        return None  # open(path) defaults to 'r'.
     if isinstance(mode_node, ast.Constant) and isinstance(mode_node.value, str):
-        return mode_node.value.strip() in WRITE_FILE_MODES
-    return False
+        mode = mode_node.value.strip()
+        if WRITE_FILE_MODE_FLAGS.intersection(mode):
+            return f"open(..., {mode!r}) call"
+        return None
+    # A mode computed at runtime could be anything. Calling it read-only would
+    # hide a possible write, which is the wrong direction for an inventory whose
+    # output feeds a gating decision, so surface it and let a human resolve it.
+    return "open() call whose mode is computed at runtime"
 
 
 def body_write_signals(node: ast.AST) -> list[Signal]:
@@ -499,8 +512,9 @@ def body_write_signals(node: ast.AST) -> list[Signal]:
             name = call_name(child)
             if not name:
                 continue
-            if opens_for_writing(child):
-                record("write", "body", "open(..., mode=write) call")
+            open_evidence = open_write_evidence(child)
+            if open_evidence:
+                record("write", "body", open_evidence)
                 continue
             tokens = set(tokenize(name))
             hits = tokens & BODY_WRITE_VERBS
