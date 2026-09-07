@@ -330,7 +330,7 @@ def collect_tool_decorator_aliases(tree: ast.Module) -> ToolOrigins:
     """Classify every name in one module that could introduce a ``@tool``."""
     confirmed: set[str] = set()
     foreign: dict[str, str] = {}
-    modules: set[str] = {AGENT_FRAMEWORK}
+    modules: set[str] = set()
     star_imported = False
 
     for node in ast.walk(tree):
@@ -381,8 +381,14 @@ def tool_decorator_provenance(node: ast.expr, origins: ToolOrigins) -> str | Non
         root = target.value
         while isinstance(root, ast.Attribute):
             root = root.value
-        if isinstance(root, ast.Name) and root.id in origins.modules:
+        if not isinstance(root, ast.Name):
+            return None
+        if root.id in origins.modules:
             return ToolProvenance.CONFIRMED
+        if root.id == AGENT_FRAMEWORK:
+            # Names the framework, but the import is missing. That is broken
+            # Python, so do not claim it as confirmed; surface it instead.
+            return ToolProvenance.UNATTRIBUTED
     return None
 
 
@@ -591,10 +597,10 @@ def build_record(
 
     if provenance == ToolProvenance.UNATTRIBUTED:
         notes.append(
-            "This file decorates with '@tool' but never imports it from "
-            f"{AGENT_FRAMEWORK}, so the decorator could not be traced. It is listed "
-            "as best-effort in case the import is indirect. Confirm it is an Agent "
-            "Framework tool before relying on the approval_mode column."
+            f"This decorator could not be traced to an {AGENT_FRAMEWORK} import in "
+            "this file. It is listed as best-effort in case the import is indirect. "
+            "Confirm it is an Agent Framework tool before relying on the "
+            "approval_mode column."
         )
 
     return ToolRecord(

@@ -66,7 +66,7 @@ reporting nothing. `inventory_tools.py` therefore attributes before it claims:
 |---|---|
 | `from agent_framework import tool`, a submodule import, an alias, `import agent_framework as af` with `@af.tool`, or a star import from `agent_framework` | `parsed` |
 | `tool` imported from any other module, or defined in the file itself | not reported; a note names the module it came from |
-| a bare `@tool` with nothing in the file to trace it to | `best-effort`, with a note on the record |
+| a bare `@tool`, or `@agent_framework.tool` with no matching import, and nothing in the file to trace it to | `best-effort`, with a note on the record |
 
 When a run reports fewer tools than the maker expects, read the notes before
 concluding the codebase is clean. A skipped file is not an empty one.

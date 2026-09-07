@@ -99,8 +99,17 @@ APPROVAL_SPECS: dict[str, ApprovalSpec] = {
 
 
 def mask(name: str, value: Any, extra_redactions: frozenset[str]) -> str:
-    """Mask secrets, and shorten long values without hiding their size."""
-    if name.lower() in ALWAYS_REDACT or name.lower() in extra_redactions:
+    """Mask secrets, and shorten long values without hiding their size.
+
+    Both sides of the comparison are lowercased. A spec that declares
+    ``redact={"ApiKey"}`` must still mask an argument called ``apiKey``:
+    this is the boundary that keeps a secret out of an approval request, so
+    it cannot depend on the author matching the caller's capitalisation.
+    """
+    lowered = name.lower()
+    if lowered in ALWAYS_REDACT:
+        return "[redacted]"
+    if lowered in {redaction.lower() for redaction in extra_redactions}:
         return "[redacted]"
     text = str(value)
     if len(text) <= MAX_VALUE_CHARACTERS:

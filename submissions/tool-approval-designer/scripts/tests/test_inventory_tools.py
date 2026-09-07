@@ -303,6 +303,29 @@ class ToolProvenanceTests(unittest.TestCase):
         )
         self.assertEqual(records, [])
 
+    def test_imported_module_qualified_decorator_is_confirmed(self):
+        record = only(
+            "import agent_framework\n"
+            "@agent_framework.tool(approval_mode='always_require')\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(record.detection, "parsed")
+        self.assertEqual(record.notes, [])
+
+    def test_module_qualified_decorator_without_the_import_is_best_effort(self):
+        """Naming the framework is not the same as importing it."""
+        record = only(
+            "@agent_framework.tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return ''\n"
+        )
+        self.assertEqual(record.detection, "best-effort")
+        self.assertEqual(len(record.notes), 1)
+        self.assertIn("could not be traced", record.notes[0])
+
     def test_untraceable_tools_count_as_best_effort(self):
         inventory = inventory_tools.Inventory(root=".", tools=[], notes=[])
         inventory.tools.extend(
