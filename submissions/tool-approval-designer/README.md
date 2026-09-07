@@ -154,15 +154,17 @@ python scripts/tests/test_inventory_tools.py
 python scripts/tests/test_approval_renderer.py
 ```
 
-102 tests covering decorator and alias detection, decorator provenance, approval
+110 tests covering decorator and alias detection, decorator provenance, approval
 mode reading, write and external and blast-radius signals including every
 write-capable `open()` mode permutation, the false positives that the
 vocabularies are tuned to avoid, best-effort Go detection and its line
-attribution, file handling including BOM-prefixed sources and explicitly named
-paths, summary agreement, output shape, and exit codes. A further 14 cover the
-shipped approval renderer template, most importantly that redaction is
-case-insensitive on both the argument name and the declared redaction list, since
-that is the boundary keeping a secret out of the approval text a human reads.
+attribution, file handling including BOM-prefixed sources, explicitly named
+paths and pruned vendor directories, summary agreement, output shape, and exit
+codes. Two of them assert that the counts stated in this paragraph match the
+suites, so these numbers cannot go stale. A further 14 cover the shipped
+approval renderer template, most importantly that redaction is case-insensitive
+on both the argument name and the declared redaction list, since that is the
+boundary keeping a secret out of the approval text a human reads.
 ## Verified product facts, with sources
 
 Every product claim the skill makes traces to one of these. Details are in

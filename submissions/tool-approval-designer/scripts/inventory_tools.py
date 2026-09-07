@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
 import sys
 from dataclasses import asdict, dataclass, field
@@ -759,15 +760,23 @@ def iter_source_files(root: Path, languages: set[str], include_tests: bool):
             yield root
         return
 
-    candidates = sorted(
-        path
-        for path in root.rglob("*")
-        if path.is_file()
-        and path.suffix in suffixes
-        and not SKIP_DIRECTORIES.intersection(path.parts)
-    )
+    candidates: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune in place. Filtering after root.rglob("*") still pays to walk and
+        # allocate every path inside node_modules and .git, which is the cost
+        # SKIP_DIRECTORIES exists to avoid. Pruning here means os.walk never
+        # descends into them at all.
+        dirnames[:] = [name for name in dirnames if name not in SKIP_DIRECTORIES]
+        if not include_tests:
+            dirnames[:] = [name for name in dirnames if name != "tests"]
+        current = Path(dirpath)
+        candidates.extend(
+            current / name for name in filenames if Path(name).suffix in suffixes
+        )
 
-    for path in candidates:
+    # Sorted as a whole, not per directory, so the order does not depend on the
+    # traversal and the output stays deterministic across platforms.
+    for path in sorted(candidates):
         if not include_tests and (
             TEST_FILE.search(path.name) or "tests" in path.parts
         ):

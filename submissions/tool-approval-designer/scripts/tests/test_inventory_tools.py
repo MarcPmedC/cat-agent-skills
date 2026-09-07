@@ -7,14 +7,17 @@ Run from the skill root (the directory containing SKILL.md):
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT_PATH = Path(__file__).parents[1] / "inventory_tools.py"
 SUBMISSION_ROOT = SCRIPT_PATH.parents[1]
@@ -857,6 +860,41 @@ class FileHandlingTests(unittest.TestCase):
         _, inventory = self.build({"node_modules/pkg/thing.py": body})
         self.assertEqual(inventory.tools, [])
 
+    def test_vendor_directories_are_pruned_not_just_filtered(self):
+        """Skipping must happen during traversal, not after walking everything."""
+        body = (
+            "from agent_framework import tool\n"
+            "@tool\n"
+            "def ping() -> str:\n"
+            "    '''Heartbeat.'''\n"
+            "    return 'ok'\n"
+        )
+        directory, _ = self.build(
+            {
+                "app.py": body,
+                "node_modules/pkg/lib/deep/vendored.py": body,
+                ".git/objects/pack/thing.py": body,
+            }
+        )
+        visited: list[str] = []
+        real_walk = inventory_tools.os.walk
+
+        def recording_walk(top, *args, **kwargs):
+            for entry in real_walk(top, *args, **kwargs):
+                visited.append(entry[0])
+                yield entry
+
+        with mock.patch.object(inventory_tools.os, "walk", recording_walk):
+            inventory = inventory_tools.build_inventory(directory, {"python"}, False)
+
+        self.assertEqual([record.name for record in inventory.tools], ["ping"])
+        self.assertTrue(visited, "the walker was never called")
+        for skipped in ("node_modules", ".git"):
+            self.assertFalse(
+                any(skipped in entry for entry in visited),
+                f"{skipped} was traversed rather than pruned",
+            )
+
     def test_language_filter_excludes_go(self):
         directory, _ = self.build({"main.go": "t := tool.NewFunc(f)\n"})
         inventory = inventory_tools.build_inventory(directory, {"python"}, False)
@@ -1138,6 +1176,50 @@ class ShippedFixtureTests(unittest.TestCase):
         self.assertEqual(counts["tools"], 8)
         self.assertEqual(counts["gated"], 3)
         self.assertEqual(counts["ungated_write_external"], 1)
+
+
+def count_test_methods(path: Path) -> int:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_")
+    )
+
+
+class DocumentedCountTests(unittest.TestCase):
+    """The README states exact test counts, so make them unable to drift.
+
+    A hardcoded number in prose is a claim about the code that nothing enforces.
+    It went stale twice during review, which is the whole argument for asserting
+    it rather than remembering to update it.
+    """
+
+    def readme(self) -> str:
+        return (SUBMISSION_ROOT / "README.md").read_text(encoding="utf-8")
+
+    def assert_documented(self, pattern: str, path: Path, label: str) -> None:
+        match = re.search(pattern, self.readme())
+        self.assertIsNotNone(
+            match, f"README no longer states the {label} test count as {pattern!r}."
+        )
+        self.assertEqual(
+            int(match.group(1)),
+            count_test_methods(path),
+            f"README claims a stale {label} test count. Update the number in "
+            "README.md to match this suite.",
+        )
+
+    def test_readme_states_this_suites_count(self):
+        self.assert_documented(r"(\d+) tests covering", Path(__file__), "inventory")
+
+    def test_readme_states_the_renderer_suites_count(self):
+        self.assert_documented(
+            r"A further (\d+) cover",
+            Path(__file__).with_name("test_approval_renderer.py"),
+            "renderer",
+        )
 
 
 if __name__ == "__main__":
