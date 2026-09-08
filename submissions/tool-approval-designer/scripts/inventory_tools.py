@@ -762,10 +762,14 @@ def iter_source_files(root: Path, languages: set[str], include_tests: bool):
 
     candidates: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        # Prune in place. Filtering after root.rglob("*") still pays to walk and
+        # Prune in place, and prune by directory NAME rather than by testing the
+        # whole path. Filtering after root.rglob("*") still pays to walk and
         # allocate every path inside node_modules and .git, which is the cost
-        # SKIP_DIRECTORIES exists to avoid. Pruning here means os.walk never
-        # descends into them at all.
+        # SKIP_DIRECTORIES exists to avoid. It is also wrong: a path test
+        # inspects the ancestors above root too, so scanning a repo that happens
+        # to live under a directory called build, dist, env or venv would skip
+        # every file and report an empty inventory. Only names at or below root
+        # are ours to judge.
         dirnames[:] = [name for name in dirnames if name not in SKIP_DIRECTORIES]
         if not include_tests:
             dirnames[:] = [name for name in dirnames if name != "tests"]
@@ -777,9 +781,13 @@ def iter_source_files(root: Path, languages: set[str], include_tests: bool):
     # Sorted as a whole, not per directory, so the order does not depend on the
     # traversal and the output stays deterministic across platforms.
     for path in sorted(candidates):
-        if not include_tests and (
-            TEST_FILE.search(path.name) or "tests" in path.parts
-        ):
+        # Only the filename is tested here, for the same reason: a directory
+        # named tests below root has already been pruned, so anything a path
+        # test could still add is an ancestor above root, which is not a
+        # statement about the caller's code. Pointing the inventory at a
+        # directory that is itself named tests is an explicit request and is
+        # honoured, exactly as naming a single test file is.
+        if not include_tests and TEST_FILE.search(path.name):
             continue
         yield path
 

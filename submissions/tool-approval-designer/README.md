@@ -143,9 +143,12 @@ file itself, is skipped with a note rather than reported with an `approval_mode`
 it does not have. A bare `@tool` with no traceable import is kept and marked
 `best-effort`.
 
-Test files and `tests/` directories are skipped when scanning a directory, unless
-you pass `--include-tests`. A file you name directly is always read, including a
-test file, on the basis that pointing at a path is an explicit request.
+Test files and `tests/` directories below the scan root are skipped when scanning
+a directory, unless you pass `--include-tests`. A path you name directly is
+always read, including a test file or a directory that is itself named `tests`,
+on the basis that pointing at a path is an explicit request. Directory names are
+judged only at or below the root, so a repo that happens to live under a folder
+called `build` or `venv` still scans normally.
 
 Regression tests, from the same directory:
 
@@ -154,17 +157,18 @@ python scripts/tests/test_inventory_tools.py
 python scripts/tests/test_approval_renderer.py
 ```
 
-110 tests covering decorator and alias detection, decorator provenance, approval
+114 tests covering decorator and alias detection, decorator provenance, approval
 mode reading, write and external and blast-radius signals including every
 write-capable `open()` mode permutation, the false positives that the
 vocabularies are tuned to avoid, best-effort Go detection and its line
 attribution, file handling including BOM-prefixed sources, explicitly named
-paths and pruned vendor directories, summary agreement, output shape, and exit
-codes. Two of them assert that the counts stated in this paragraph match the
-suites, so these numbers cannot go stale. A further 14 cover the shipped
-approval renderer template, most importantly that redaction is case-insensitive
-on both the argument name and the declared redaction list, since that is the
-boundary keeping a secret out of the approval text a human reads.
+paths, pruned vendor directories and a repo that itself lives under a directory
+named `build` or `venv`, summary agreement, output shape, and exit codes. Two of
+them assert that the counts stated in this paragraph match the suites, so these
+numbers cannot go stale. A further 14 cover the shipped approval renderer
+template, most importantly that redaction is case-insensitive on both the
+argument name and the declared redaction list, since that is the boundary
+keeping a secret out of the approval text a human reads.
 ## Verified product facts, with sources
 
 Every product claim the skill makes traces to one of these. Details are in

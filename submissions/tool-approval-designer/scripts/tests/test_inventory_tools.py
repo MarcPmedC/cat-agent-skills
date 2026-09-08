@@ -823,6 +823,56 @@ class FileHandlingTests(unittest.TestCase):
         _, inventory = self.build({"test_thing.py": body}, include_tests=True)
         self.assertEqual(len(inventory.tools), 1)
 
+    TOOL_BODY = (
+        "from agent_framework import tool\n"
+        "@tool\n"
+        "def ping() -> str:\n"
+        "    '''Heartbeat.'''\n"
+        "    return 'ok'\n"
+    )
+
+    def scan_under_ancestor(self, ancestor: str):
+        """Build tool.py inside <tmp>/<ancestor>/repo and scan repo itself."""
+        directory = Path(tempfile.mkdtemp())
+        repo = directory / ancestor / "repo"
+        repo.mkdir(parents=True)
+        (repo / "tool.py").write_text(self.TOOL_BODY, encoding="utf-8")
+        return inventory_tools.build_inventory(repo, {"python"}, False)
+
+    def test_a_skipped_name_above_root_does_not_empty_the_inventory(self):
+        """Only names at or below root are ours to judge.
+
+        Testing whole paths against SKIP_DIRECTORIES inspects the ancestors too,
+        so a repo checked out under a directory called build, dist, env or venv
+        would report zero tools. That failure is silent and looks like "this
+        codebase has no tools", which is the worst possible way to be wrong.
+        """
+        for ancestor in ("build", "dist", "env", "venv", "node_modules", ".git"):
+            with self.subTest(ancestor=ancestor):
+                inventory = self.scan_under_ancestor(ancestor)
+                self.assertEqual(
+                    [record.name for record in inventory.tools],
+                    ["ping"],
+                    f"a parent directory named {ancestor} emptied the inventory",
+                )
+
+    def test_a_tests_directory_above_root_does_not_empty_the_inventory(self):
+        inventory = self.scan_under_ancestor("tests")
+        self.assertEqual([record.name for record in inventory.tools], ["ping"])
+
+    def test_a_root_named_tests_is_scanned_as_an_explicit_request(self):
+        """Naming a directory is as explicit as naming a file."""
+        directory = Path(tempfile.mkdtemp())
+        root = directory / "tests"
+        root.mkdir()
+        (root / "tool.py").write_text(self.TOOL_BODY, encoding="utf-8")
+        inventory = inventory_tools.build_inventory(root, {"python"}, False)
+        self.assertEqual([record.name for record in inventory.tools], ["ping"])
+
+    def test_a_tests_directory_below_root_is_still_pruned(self):
+        _, inventory = self.build({"tests/tool.py": self.TOOL_BODY})
+        self.assertEqual(inventory.tools, [])
+
     def test_an_explicitly_named_test_file_is_read(self):
         """Pointing at a file is an explicit request, not a directory sweep."""
         body = (
